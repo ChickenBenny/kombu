@@ -36,7 +36,7 @@ is scheduled immediately; after an empty poll the transport waits
 
 ``wait_time_seconds`` and ``polling_interval`` are applied at different
 layers and their delays compose additively.  For an empty poll the total
-time before the next ``ReceiveMessage`` call is issued is:
+time before the next ``ReceiveMessage`` call is issued is::
 
     effective interval = wait_time_seconds + polling_interval
 
