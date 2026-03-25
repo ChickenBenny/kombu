@@ -1712,6 +1712,100 @@ class test_MultiChannelPoller:
             num=chan1.unacked_restore_limit,
         )
 
+    def test_maybe_restore_messages_calls_restore_visible(self):
+        """Happy path: restore_visible is called for a channel with active queues."""
+        p = self.Poller()
+        channel = Mock(name='channel')
+        channel.active_queues = ['a_queue']
+        p._channels = [channel]
+
+        p.maybe_restore_messages()
+
+        channel.qos.restore_visible.assert_called_once_with(
+            num=channel.unacked_restore_limit,
+        )
+
+    def test_maybe_restore_messages_skips_channel_without_active_queues(self):
+        """Channels with no active queues must be ignored."""
+        p = self.Poller()
+        channel = Mock(name='channel')
+        channel.active_queues = []
+        p._channels = [channel]
+
+        p.maybe_restore_messages()
+
+        channel.qos.restore_visible.assert_not_called()
+
+    def test_maybe_restore_messages_swallows_connection_error(self):
+        """Connection errors from timer callbacks must not propagate.
+
+        maybe_restore_messages is scheduled via call_repeatedly and runs
+        inside fire_timers. If a ConnectionError escapes, it matches
+        hub.propagate_errors and tears down the entire event loop.
+        The fix catches channel.connection_errors and returns early.
+        """
+        p = self.Poller()
+
+        class ConnError(Exception):
+            pass
+
+        channel = Mock(name='channel')
+        channel.active_queues = ['a_queue']
+        channel.connection_errors = (ConnError,)
+        channel.qos.restore_visible.side_effect = ConnError('connection lost')
+        p._channels = [channel]
+
+        # Must not raise
+        p.maybe_restore_messages()
+
+        channel.qos.restore_visible.assert_called_once()
+
+    def test_maybe_check_subclient_health_calls_check_health(self):
+        """Happy path: check_health is called when subclient is cached."""
+        p = self.Poller()
+        channel = Mock(name='channel')
+        client = Mock(name='subclient')
+        channel.__dict__['subclient'] = client
+        p._channels = [channel]
+
+        p.maybe_check_subclient_health()
+
+        client.check_health.assert_called_once()
+
+    def test_maybe_check_subclient_health_skips_when_no_subclient(self):
+        """Channels with no cached subclient must be silently skipped."""
+        p = self.Poller()
+        channel = Mock(name='channel')
+        # Ensure 'subclient' is not in __dict__ (not yet accessed/cached)
+        channel.__dict__.pop('subclient', None)
+        p._channels = [channel]
+
+        p.maybe_check_subclient_health()  # must not raise
+
+    def test_maybe_check_subclient_health_swallows_connection_error(self):
+        """Connection errors from timer callbacks must not propagate.
+
+        Same reasoning as test_maybe_restore_messages_swallows_connection_error:
+        the fix catches channel.connection_errors and returns early instead of
+        letting the exception bubble up through fire_timers.
+        """
+        p = self.Poller()
+
+        class ConnError(Exception):
+            pass
+
+        channel = Mock(name='channel')
+        channel.connection_errors = (ConnError,)
+        client = Mock(name='subclient')
+        client.check_health.side_effect = ConnError('connection lost')
+        channel.__dict__['subclient'] = client
+        p._channels = [channel]
+
+        # Must not raise
+        p.maybe_check_subclient_health()
+
+        client.check_health.assert_called_once()
+
     def test_handle_event(self):
         p = self.Poller()
         chan = Mock(name='chan')

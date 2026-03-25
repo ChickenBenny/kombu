@@ -572,9 +572,18 @@ class MultiChannelPoller:
         for channel in self._channels:
             if channel.active_queues:
                 # only need to do this once, as they are not local to channel.
-                return channel.qos.restore_visible(
-                    num=channel.unacked_restore_limit,
-                )
+                try:
+                    return channel.qos.restore_visible(
+                        num=channel.unacked_restore_limit,
+                    )
+                except channel.connection_errors:
+                    # Connection is broken; skip this cycle and retry next tick.
+                    # The main polling loop handles reconnection independently.
+                    logger.debug(
+                        'maybe_restore_messages: connection error, '
+                        'will retry on next cycle', exc_info=True
+                    )
+                    return
 
     def maybe_check_subclient_health(self):
         for channel in self._channels:
@@ -582,7 +591,14 @@ class MultiChannelPoller:
             client = channel.__dict__.get('subclient')
             if client is not None \
                     and callable(getattr(client, 'check_health', None)):
-                client.check_health()
+                try:
+                    client.check_health()
+                except channel.connection_errors:
+                    logger.debug(
+                        'maybe_check_subclient_health: connection error, '
+                        'will retry on next cycle', exc_info=True
+                    )
+                    return
 
     def on_readable(self, fileno):
         chan, type = self._fd_to_chan[fileno]
