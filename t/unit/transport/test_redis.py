@@ -1246,6 +1246,51 @@ class test_Channel:
             call(13, transport.on_readable, 13),
         ])
 
+    def test_register_with_event_loop_stores_trefs_on_cycle(self):
+        """call_repeatedly return values (trefs) must be stored on cycle.
+
+        Without storing the trefs, stale timer entries accumulate in
+        hub.timer._queue across reconnects (each reconnect adds a new entry
+        without removing the old one).
+        """
+        transport = self.connection.transport
+        transport.cycle = Mock(name='cycle')
+        transport.cycle.fds = {}
+        conn = Mock(name='conn')
+        conn.client = Mock(name='client', transport_options={})
+        loop = Mock(name='loop')
+        tref1, tref2 = Mock(name='tref_restore'), Mock(name='tref_health')
+        loop.call_repeatedly.side_effect = [tref1, tref2]
+
+        redis.Transport.register_with_event_loop(transport, conn, loop)
+
+        assert transport.cycle._restore_messages_tref is tref1
+        assert transport.cycle._subclient_health_tref is tref2
+
+    def test_register_with_event_loop_cancels_stale_trefs_on_reconnect(self):
+        """Stale timer entries from a previous connection must be cancelled.
+
+        Each call to register_with_event_loop (i.e. each reconnect) must
+        cancel the previous trefs before registering new ones, so that
+        hub.timer._queue never accumulates duplicate entries.
+        """
+        transport = self.connection.transport
+        transport.cycle = Mock(name='cycle')
+        transport.cycle.fds = {}
+        conn = Mock(name='conn')
+        conn.client = Mock(name='client', transport_options={})
+        loop = Mock(name='loop')
+
+        old_restore_tref = Mock(name='old_restore_tref')
+        old_health_tref = Mock(name='old_health_tref')
+        transport.cycle._restore_messages_tref = old_restore_tref
+        transport.cycle._subclient_health_tref = old_health_tref
+
+        redis.Transport.register_with_event_loop(transport, conn, loop)
+
+        old_restore_tref.cancel.assert_called_once()
+        old_health_tref.cancel.assert_called_once()
+
     def test_transport_on_readable(self):
         transport = self.connection.transport
         cycle = transport.cycle = Mock(name='cyle')
